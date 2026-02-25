@@ -1,3 +1,4 @@
+// application/MinesweeperGameService.js
 "use strict";
 
 import { Result } from '../common/Result.js';
@@ -21,8 +22,8 @@ export class MinesweeperGameService {
   #gameState;
   #isGameActive;
   #isFirstMove;
-  #initialMineCount;          // 新增：记录初始设定的地雷数
-  #onFirstMoveInitialization; // 新增：首击布雷的回调函数
+  #initialMineCount;          // 追加: 初期の地雷数を記録
+  #onFirstMoveInitialization; // 追加: 初回クリック時の地雷配置コールバック
 
   constructor(board, gameRules, cellInteractionService, eventBus, gameOverService, initialMineCount = 0) {
     this.#board = board;
@@ -30,13 +31,13 @@ export class MinesweeperGameService {
     this.#cellInteractionService = cellInteractionService;
     this.#eventBus = eventBus;
     this.#gameOverService = gameOverService;
-    this.#initialMineCount = initialMineCount; // 保存地雷数
+    this.#initialMineCount = initialMineCount; 
     this.#gameState = this.#createInitialGameState();
     this.#isGameActive = false;
     this.#isFirstMove = true;
   }
 
-  // 新增：注册第一次点击时的初始化事件
+  // 追加: 初回クリック時の初期化イベントを登録する
   setFirstMoveInitialization(callback) {
     this.#onFirstMoveInitialization = callback;
   }
@@ -46,7 +47,6 @@ export class MinesweeperGameService {
     this.#isGameActive = true;
     this.#isFirstMove = true;
     
-    // Clear previous game over state
     this.#gameOverService.clearWrongFlags();
     
     const event = new GameStartedEvent();
@@ -67,11 +67,10 @@ export class MinesweeperGameService {
       return Result.failure('Invalid position provided');
     }
 
-    // If this is the first move, publish first-move event
     if (this.#isFirstMove) {
       this.#isFirstMove = false;
       
-      // === 核心修改：在玩家第一击时，才执行实际的布雷操作 ===
+      // === 核心変更: プレイヤーの最初の一撃で、実際の地雷配置を実行する ===
       if (this.#onFirstMoveInitialization) {
         this.#onFirstMoveInitialization(position);
       }
@@ -91,7 +90,6 @@ export class MinesweeperGameService {
     const revealData = revealResult.value;
     this.#updateGameStateAfterReveal(revealData);
 
-    // Publish event for the main cell
     const mainCellEvent = new CellRevealedEvent({
       position,
       cell: revealData.cell,
@@ -99,7 +97,6 @@ export class MinesweeperGameService {
     });
     this.#eventBus.publish(mainCellEvent);
 
-    // If cascade reveal happened, publish events for all revealed neighbors
     if (revealData.type === 'cascade_reveal' && revealData.revealedNeighbors) {
       for (const neighborData of revealData.revealedNeighbors) {
         this.#updateGameStateAfterReveal(neighborData);
@@ -112,7 +109,6 @@ export class MinesweeperGameService {
       }
     }
 
-    // Check for game end conditions
     const gameEndResult = this.#checkGameEndConditions();
     if (gameEndResult.isSuccess && gameEndResult.value.gameEnded) {
       this.#endGame(gameEndResult.value.result);
@@ -142,7 +138,6 @@ export class MinesweeperGameService {
     const flagData = flagResult.value;
     this.#updateGameStateAfterFlag(flagData);
 
-    // Publish cell flagged event
     const cellEvent = new CellFlaggedEvent({
       position,
       cell: flagData.cell,
@@ -150,7 +145,6 @@ export class MinesweeperGameService {
     });
     this.#eventBus.publish(cellEvent);
 
-    // Check for game end conditions (in case all mines are correctly flagged)
     const gameEndResult = this.#checkGameEndConditions();
     if (gameEndResult.isSuccess && gameEndResult.value.gameEnded) {
       this.#endGame(gameEndResult.value.result);
@@ -191,7 +185,7 @@ export class MinesweeperGameService {
     const totalCells = this.#board.bounds.rows * this.#board.bounds.cols;
     const mineCells = this.#board.getMineCells();
     
-    // 修改：如果尚未布雷(mineCells为0)，则使用初始传入的设定值，保证UI显示正确的雷数
+    // 変更: まだ地雷が配置されていない場合、初期設定値を使用してUIを正しく表示する
     const currentMineCount = mineCells.length > 0 ? mineCells.length : this.#initialMineCount;
     
     return Object.freeze({
