@@ -58,6 +58,8 @@ export function createContainer() {
       
       // 3. 将布雷逻辑延迟到玩家的“第一击”
       service.setFirstMoveInitialization((firstClickPos) => {
+        // デバッグ用：初回クリック時にコンソールにメッセージを表示し、コードが更新されたか確認する
+        console.log(`初回クリック座標: x=${firstClickPos.x}, y=${firstClickPos.y}。安全な地雷配置を実行します。`);
         // 生成地雷时，完美避开第一击的位置及其周围8个格子
         const minePositions = generateSafeMinePositions(config, firstClickPos);
         placeMinesOnBoard(board, minePositions);
