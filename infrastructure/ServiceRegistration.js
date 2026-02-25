@@ -1,4 +1,3 @@
-// infrastructure/ServiceRegistration.js
 "use strict";
 
 import { Container } from './Container.js';
@@ -14,9 +13,6 @@ import { CellRenderer } from '../presentation/CellRenderer.js';
 import { GameOverService } from './GameOverService.js';
 import { GAME_CONSTANTS } from '../common/GameConstants.js';
 import { Result } from '../common/Result.js';
-
-// 新規追加：無推測モード用ロジックソルバー
-import { LogicSolver } from '../domain/services/LogicSolver.js';
 
 export function createContainer() {
   const container = new Container();
@@ -51,48 +47,29 @@ export function createContainer() {
     };
   }, { singleton: true });
   
-  // Game service factory (無推測モード向けに修正)
+  // Game service factory
   container.register('gameServiceFactory', (boardFactory, gameRules, cellInteractionService, eventBus, gameOverService) => {
     return (config) => {
-      let board;
-      let neighborsResult;
-      let isSolvable = false;
-      let attemptCount = 0;
-      const MAX_ATTEMPTS = 500; // ブラウザのフリーズを防ぐための生成上限
+      // 1. 初始化空棋盘（此时不放雷）
+      const board = boardFactory(config);
       
-      // 論理的に解ける盤面が生成されるまで繰り返す
-      while (!isSolvable && attemptCount < MAX_ATTEMPTS) {
-        attemptCount++;
-        
-        // 1. 盤面を初期化
-        board = boardFactory(config);
-        
-        // 2. 地雷を配置
-        const minePositions = generateMinePositions(config);
+      // 2. 传递 config.minesNumber，保证 UI 计数器正确显示
+      const service = new MinesweeperGameService(board, gameRules, cellInteractionService, eventBus, gameOverService, config.minesNumber);
+      
+      // 3. 将布雷逻辑延迟到玩家的“第一击”
+      service.setFirstMoveInitialization((firstClickPos) => {
+        // 生成地雷时，完美避开第一击的位置及其周围8个格子
+        const minePositions = generateSafeMinePositions(config, firstClickPos);
         placeMinesOnBoard(board, minePositions);
         
-        // 3. 周囲の地雷数を計算
-        neighborsResult = NeighborService.calculateMineCountsForBoard(board);
+        // 布雷完毕后，计算周围的数字
+        const neighborsResult = NeighborService.calculateMineCountsForBoard(board);
         if (neighborsResult.isFailure) {
           throw new Error(`Failed to calculate mine counts: ${neighborsResult.error}`);
         }
-        
-        // 4. 検証のスタート地点として「周囲に地雷がないマス(0マス)」を探す
-        const startPosition = findZeroMineCell(board, config);
-        
-        // 5. ソルバーで検証（完全に解ける場合のみループを抜ける）
-        if (startPosition) {
-          isSolvable = LogicSolver.isSolvable(board, startPosition);
-        }
-      }
+      });
       
-      if (attemptCount >= MAX_ATTEMPTS) {
-        console.warn(`[警告] ${MAX_ATTEMPTS}回試行しましたが、完全な無推測盤面を生成できませんでした。妥協して開始します。`);
-      } else {
-        console.log(`[生成完了] 無推測モード盤面が生成されました。試行回数: ${attemptCount}`);
-      }
-      
-      return new MinesweeperGameService(board, gameRules, cellInteractionService, eventBus, gameOverService);
+      return service;
     };
   }, { 
     dependencies: ['boardFactory', 'gameRules', 'cellInteractionService', 'eventBus', 'gameOverService'] 
@@ -101,37 +78,35 @@ export function createContainer() {
   return container;
 }
 
-// 追加機能：検証を開始するための安全な「0」マスを見つける
-function findZeroMineCell(board, config) {
-  // シャッフルしてランダムな0を探すことも可能ですが、ここではシンプルに左上から走査します
-  for (let x = 0; x < config.rows; x++) {
-    for (let y = 0; y < config.cols; y++) {
-      const cellResult = board.getCellAt({ x, y });
-      if (cellResult.isSuccess) {
-        const cell = cellResult.value;
-        // 地雷ではなく、かつ周囲の地雷数が0であること
-        if (!cell.containsMine && (cell.adjacentMines === 0)) {
-          return { x, y };
-        }
-      }
-    }
-  }
-  return null; // 盤面に0マスが一つも存在しない場合
-}
-
-function generateMinePositions(config) {
+// 核心功能：生成绝对安全的地雷坐标（避开首击 3x3 区域）
+function generateSafeMinePositions(config, firstClickPos) {
   const positions = [];
   const totalCells = config.rows * config.cols;
   
   if (config.minesNumber >= totalCells) {
     throw new Error('Mine count cannot exceed total cells');
   }
-  
+
+  // 如果剩余格子足够多，则避开玩家点击格子及其周围一圈（共9格），确保点击中心必定是 0 并引发大面积连爆
+  const canAvoidNeighbors = config.minesNumber <= (totalCells - 9);
+
   while (positions.length < config.minesNumber) {
     const x = Math.floor(Math.random() * config.rows);
     const y = Math.floor(Math.random() * config.cols);
-    const positionKey = `${x},${y}`;
     
+    if (canAvoidNeighbors) {
+      // 避开 3x3 区域
+      if (Math.abs(x - firstClickPos.x) <= 1 && Math.abs(y - firstClickPos.y) <= 1) {
+        continue;
+      }
+    } else {
+      // 极端高密度情况（极少发生）：仅避开正中心
+      if (x === firstClickPos.x && y === firstClickPos.y) {
+        continue;
+      }
+    }
+    
+    const positionKey = `${x},${y}`;
     if (!positions.some(pos => `${pos.x},${pos.y}` === positionKey)) {
       positions.push({ x, y });
     }
@@ -163,7 +138,7 @@ export function registerDevelopmentServices(container) {
 export function registerProductionServices(container) {
   container.register('logger', () => {
     return {
-      log: () => {}, // No-op in production
+      log: () => {}, 
       warn: (...args) => console.warn('[MINESWEEPER]', ...args),
       error: (...args) => console.error('[MINESWEEPER]', ...args)
     };
