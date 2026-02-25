@@ -21,16 +21,24 @@ export class MinesweeperGameService {
   #gameState;
   #isGameActive;
   #isFirstMove;
+  #initialMineCount;          // 新增：记录初始设定的地雷数
+  #onFirstMoveInitialization; // 新增：首击布雷的回调函数
 
-  constructor(board, gameRules, cellInteractionService, eventBus, gameOverService) {
+  constructor(board, gameRules, cellInteractionService, eventBus, gameOverService, initialMineCount = 0) {
     this.#board = board;
     this.#gameRules = gameRules;
     this.#cellInteractionService = cellInteractionService;
     this.#eventBus = eventBus;
     this.#gameOverService = gameOverService;
+    this.#initialMineCount = initialMineCount; // 保存地雷数
     this.#gameState = this.#createInitialGameState();
     this.#isGameActive = false;
     this.#isFirstMove = true;
+  }
+
+  // 新增：注册第一次点击时的初始化事件
+  setFirstMoveInitialization(callback) {
+    this.#onFirstMoveInitialization = callback;
   }
 
   startNewGame() {
@@ -62,6 +70,12 @@ export class MinesweeperGameService {
     // If this is the first move, publish first-move event
     if (this.#isFirstMove) {
       this.#isFirstMove = false;
+      
+      // === 核心修改：在玩家第一击时，才执行实际的布雷操作 ===
+      if (this.#onFirstMoveInitialization) {
+        this.#onFirstMoveInitialization(position);
+      }
+
       const firstMoveEvent = new FirstMoveEvent({
         position,
         timestamp: new Date()
@@ -177,12 +191,15 @@ export class MinesweeperGameService {
     const totalCells = this.#board.bounds.rows * this.#board.bounds.cols;
     const mineCells = this.#board.getMineCells();
     
+    // 修改：如果尚未布雷(mineCells为0)，则使用初始传入的设定值，保证UI显示正确的雷数
+    const currentMineCount = mineCells.length > 0 ? mineCells.length : this.#initialMineCount;
+    
     return Object.freeze({
       flaggedCellsCount: 0,
       revealedCellsCount: 0,
-      remainingMines: mineCells.length,
+      remainingMines: currentMineCount,
       totalCells,
-      mineCount: mineCells.length,
+      mineCount: currentMineCount,
       result: GAME_CONSTANTS.GAME_RESULTS.NONE,
       startTime: new Date(),
       endTime: null,
@@ -279,7 +296,6 @@ export class MinesweeperGameService {
     const wrongFlagsResult = this.#cellInteractionService.findWrongFlags(this.#board);
     if (wrongFlagsResult.isSuccess) {
       for (const wrongFlagData of wrongFlagsResult.value) {
-        // Mark in GameOverService for presentation layer
         this.#gameOverService.markCellAsWrongFlag(wrongFlagData.cell.id);
         
         const cellEvent = new CellRevealedEvent({
